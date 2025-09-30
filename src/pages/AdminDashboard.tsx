@@ -5,6 +5,8 @@ import { Shield, LogOut, User } from "lucide-react";
 import PaymentAdmin from "@/components/PaymentAdmin";
 import AdminStats from "@/components/AdminStats";
 import UserPlansManagement from "@/components/UserPlansManagement";
+import BlogStats from "@/components/BlogStats";
+import BlogManagement from "@/components/BlogManagement";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -91,13 +93,18 @@ const AdminDashboard = () => {
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Dashboard Overview</h2>
           <p className="text-gray-600">
-            Manage payments, subscriptions, and platform administration
+            Manage payments, subscriptions, blog content, and platform administration
           </p>
         </div>
 
         {/* Real-time Stats Cards */}
         <div className="mb-8">
           <AdminStats />
+        </div>
+
+        {/* Blog Stats Cards */}
+        <div className="mb-8">
+          <BlogStats />
         </div>
 
         {/* Payment Management */}
@@ -108,6 +115,11 @@ const AdminDashboard = () => {
         {/* User Plans Management */}
         <div className="mb-8">
           <UserPlansManagement />
+        </div>
+
+        {/* Blog Management */}
+        <div className="mb-8">
+          <BlogManagement />
         </div>
       </main>
     </div>

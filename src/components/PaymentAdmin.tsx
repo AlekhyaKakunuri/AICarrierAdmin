@@ -10,19 +10,24 @@ import { Label } from '@/components/ui/label';
 import { CheckCircle, XCircle, Clock, RefreshCw, Eye, Loader2, Plus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { addPaymentToUserPlans, checkPaymentExistsInUserPlans, getAllUserPlans } from '@/lib/userPlanService';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface PaymentData {
   id: string;
-  transactionId: string;
-  planName: string;
-  amount: string;
-  userEmail?: string;
-  userName?: string;
-  paymentScreenshot?: string;
-  status: 'pending' | 'verified' | 'rejected';
-  createdAt: any;
-  verifiedAt?: any;
-  notes?: string;
+  amount: number;
+  created_at: any;
+  payment_id: string;
+  payment_method: string;
+  payment_screenshot_url?: string;
+  plan_name: string;
+  remarks?: string;
+  status: 'pending' | 'success' | 'rejected';
+  updated_at: any;
+  user_email: string;
+  user_id: string;
+  utr_number?: string;
+  verified_by?: string;
+  verified_at?: any;
 }
 
 const PaymentAdmin = () => {
@@ -38,54 +43,46 @@ const PaymentAdmin = () => {
   const [processingPaymentId, setProcessingPaymentId] = useState<string | null>(null);
   const [paymentExistsInUserPlans, setPaymentExistsInUserPlans] = useState<{[key: string]: boolean}>({});
   const { toast } = useToast();
+  const { currentUser } = useAuth();
 
 
-  // Check if payments exist in user plans - FIXED FOR DUPLICATE TRANSACTION IDs
+  // Check if payments exist in user plans - FIXED FOR DUPLICATE PAYMENT IDs
   const checkPaymentsInUserPlans = async (payments: PaymentData[]) => {
-    console.log('🔄 CHECKING PAYMENTS - Starting...');
-    
     try {
       // Get all userPlans
       const userPlansSnapshot = await getDocs(collection(db, 'userPlans'));
-      console.log(`📊 Found ${userPlansSnapshot.docs.length} userPlans in database`);
       
-      // Create a map of existing payments (transactionId + amount as key)
+      // Create a map of existing payments (payment_id + amount as key)
       const existingPayments = new Map<string, any>();
       userPlansSnapshot.forEach(doc => {
         const data = doc.data();
         if (data.paymentId && data.amount) {
           const key = `${data.paymentId}_${data.amount}`;
           existingPayments.set(key, data);
-          console.log(`Found userPlan: ${data.paymentId} - ${data.amount} (${data.planName})`);
         }
       });
       
-      console.log('🔗 Existing payments map:', Array.from(existingPayments.keys()));
-      
-      // Check each payment using transactionId + amount as unique key
+      // Check each payment using payment_id + amount as unique key
       const existsMap: {[key: string]: boolean} = {};
       
       payments.forEach(payment => {
-        if (payment.status === 'verified') {
-          const key = `${payment.transactionId}_${payment.amount}`;
+        if (payment.status === 'success') {
+          const key = `${payment.payment_id}_${payment.amount}`;
           const exists = existingPayments.has(key);
           // Use the unique key for the map
           existsMap[key] = exists;
-          console.log(`✅ Payment ${payment.transactionId} (${payment.amount}) - ${payment.planName} exists: ${exists}`);
         }
       });
       
-      console.log('🎯 FINAL RESULT - Existence map:', existsMap);
       setPaymentExistsInUserPlans(existsMap);
       
     } catch (error) {
-      console.error('❌ Error:', error);
       setPaymentExistsInUserPlans({});
     }
   };
 
   useEffect(() => {
-    const q = query(collection(db, 'payments'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'payments'), orderBy('created_at', 'desc'));
     
     const unsubscribe = onSnapshot(q, async (querySnapshot) => {
       const paymentsData: PaymentData[] = [];
@@ -95,11 +92,17 @@ const PaymentAdmin = () => {
           ...doc.data()
         } as PaymentData);
       });
-      setPayments(paymentsData);
+      
+      // Filter out success payments - only show pending and rejected
+      const filteredPayments = paymentsData.filter(payment => 
+        payment.status?.toLowerCase() !== 'success'
+      );
+      
+      setPayments(filteredPayments);
       setLoading(false);
       
       // Check which payments exist in user plans
-      await checkPaymentsInUserPlans(paymentsData);
+      await checkPaymentsInUserPlans(filteredPayments);
     });
 
     return () => unsubscribe();
@@ -107,7 +110,7 @@ const PaymentAdmin = () => {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'verified':
+      case 'success':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'rejected':
         return <XCircle className="h-4 w-4 text-red-500" />;
@@ -118,8 +121,8 @@ const PaymentAdmin = () => {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'verified':
-        return <Badge className="bg-green-100 text-green-800">Verified</Badge>;
+      case 'success':
+        return <Badge className="bg-green-100 text-green-800">Success</Badge>;
       case 'rejected':
         return <Badge className="bg-red-100 text-red-800">Rejected</Badge>;
       default:
@@ -136,9 +139,11 @@ const PaymentAdmin = () => {
       // Update payment status in Firebase
       const paymentRef = doc(db, 'payments', selectedPayment.id);
       await updateDoc(paymentRef, {
-        status: 'verified',
-        verifiedAt: serverTimestamp(),
-        notes: verificationNotes.trim() || 'Payment verified by admin'
+        status: 'success',
+        verified_at: serverTimestamp(),
+        verified_by: currentUser?.email || 'admin',
+        remarks: verificationNotes.trim() || `Payment verified by ${currentUser?.email || 'admin'}`,
+        updated_at: serverTimestamp()
       });
 
       toast({
@@ -164,20 +169,24 @@ const PaymentAdmin = () => {
     try {
       setProcessing(true);
       setProcessingPaymentId(payment.id);
-      console.log('Adding payment to user plans:', payment);
       
       const result = await addPaymentToUserPlans({
         id: payment.id,
-        transactionId: payment.transactionId,
-        planName: payment.planName,
         amount: payment.amount,
-        userEmail: payment.userEmail || '',
-        userName: payment.userName || '',
+        created_at: payment.created_at,
+        payment_id: payment.payment_id,
+        payment_method: payment.payment_method,
+        payment_screenshot_url: payment.payment_screenshot_url,
+        plan_name: payment.plan_name,
+        remarks: payment.remarks,
         status: payment.status,
-        createdAt: payment.createdAt
+        updated_at: payment.updated_at,
+        user_email: payment.user_email,
+        user_id: payment.user_id,
+        utr_number: payment.utr_number,
+        verified_by: payment.verified_by,
+        verified_at: payment.verified_at
       });
-      
-      console.log('Add to user plans result:', result);
 
       if (result.success) {
         toast({
@@ -187,7 +196,7 @@ const PaymentAdmin = () => {
         // Update the payment existence status using composite key
         setPaymentExistsInUserPlans(prev => ({
           ...prev,
-          [`${payment.transactionId}_${payment.amount}`]: true
+          [`${payment.payment_id}_${payment.amount}`]: true
         }));
         
         // Trigger a refresh of user plans data
@@ -226,8 +235,10 @@ const PaymentAdmin = () => {
       const paymentRef = doc(db, 'payments', selectedPayment.id);
       await updateDoc(paymentRef, {
         status: 'rejected',
-        verifiedAt: serverTimestamp(),
-        notes: rejectionNotes.trim()
+        verified_at: serverTimestamp(),
+        verified_by: currentUser?.email || 'admin',
+        remarks: rejectionNotes.trim(),
+        updated_at: serverTimestamp()
       });
 
       toast({
@@ -269,14 +280,14 @@ const PaymentAdmin = () => {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Payment Management</h2>
         <div className="text-sm text-muted-foreground">
-          Total Payments: {payments.length}
+          Pending & Rejected Payments: {payments.length}
         </div>
       </div>
 
       {payments.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">No payments found</p>
+            <p className="text-muted-foreground">No pending or rejected payments found</p>
           </CardContent>
         </Card>
       ) : (
@@ -286,7 +297,7 @@ const PaymentAdmin = () => {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg">
-                    {payment.planName} - ₹{payment.amount}
+                    {payment.plan_name} - ₹{payment.amount}
                   </CardTitle>
                   <div className="flex items-center gap-2">
                     {getStatusIcon(payment.status)}
@@ -294,38 +305,27 @@ const PaymentAdmin = () => {
                   </div>
                 </div>
                 <CardDescription>
-                  Transaction ID: {payment.transactionId}
+                  Payment ID: {payment.payment_id}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="font-medium">User:</span> {payment.userName || 'N/A'}
+                    <span className="font-medium">Email:</span> {payment.user_email}
                   </div>
                   <div>
-                    <span className="font-medium">Email:</span> {payment.userEmail || 'N/A'}
-                  </div>
-                  <div>
-                    <span className="font-medium">Date:</span> {payment.createdAt?.toDate?.()?.toLocaleString() || 'N/A'}
+                    <span className="font-medium">Date:</span> {payment.created_at?.toDate?.()?.toLocaleString() || 'N/A'}
                   </div>
                   <div>
                     <span className="font-medium">Amount:</span> ₹{payment.amount}
                   </div>
+                  <div>
+                    <span className="font-medium">Payment Method:</span> {payment.payment_method}
+                  </div>
+                  <div>
+                    <span className="font-medium">UTR Number:</span> {payment.utr_number || 'N/A'}
+                  </div>
                 </div>
-                
-                {payment.paymentScreenshot && (
-                  <div>
-                    <span className="font-medium text-sm">Screenshot:</span>
-                    <p className="text-sm text-muted-foreground mt-1">{payment.paymentScreenshot}</p>
-                  </div>
-                )}
-
-                {payment.notes && (
-                  <div>
-                    <span className="font-medium text-sm">Notes:</span>
-                    <p className="text-sm text-muted-foreground mt-1">{payment.notes}</p>
-                  </div>
-                )}
 
                 <div className="flex gap-2 pt-2">
                   <Button 
@@ -335,7 +335,7 @@ const PaymentAdmin = () => {
                       setSelectedPayment(payment);
                       setShowVerifyDialog(true);
                     }}
-                    disabled={payment.status !== 'pending'}
+                    disabled={payment.status?.toLowerCase() !== 'pending'}
                   >
                     <CheckCircle className="h-3 w-3 mr-1" />
                     Verify
@@ -347,7 +347,7 @@ const PaymentAdmin = () => {
                       setSelectedPayment(payment);
                       setShowRejectDialog(true);
                     }}
-                    disabled={payment.status !== 'pending'}
+                    disabled={payment.status?.toLowerCase() !== 'pending'}
                   >
                     <XCircle className="h-3 w-3 mr-1" />
                     Reject
@@ -359,18 +359,6 @@ const PaymentAdmin = () => {
                   >
                     <Eye className="h-3 w-3 mr-1" />
                     View Details
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    onClick={() => handleAddToUserPlans(payment)}
-                    disabled={processingPaymentId === payment.id || payment.status !== 'verified' || paymentExistsInUserPlans[`${payment.transactionId}_${payment.amount}`]}
-                    className="bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700"
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    {processingPaymentId === payment.id ? 'Adding...' : 
-                     paymentExistsInUserPlans[`${payment.transactionId}_${payment.amount}`] ? 'Already Added' : 
-                     'Add to User Plans'}
                   </Button>
                 </div>
               </CardContent>
@@ -392,10 +380,12 @@ const PaymentAdmin = () => {
             {selectedPayment && (
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h4 className="font-medium mb-2">Payment Details:</h4>
-                <p><strong>Transaction ID:</strong> {selectedPayment.transactionId}</p>
-                <p><strong>Plan:</strong> {selectedPayment.planName}</p>
+                <p><strong>Payment ID:</strong> {selectedPayment.payment_id}</p>
+                <p><strong>Plan:</strong> {selectedPayment.plan_name}</p>
                 <p><strong>Amount:</strong> ₹{selectedPayment.amount}</p>
-                <p><strong>User:</strong> {selectedPayment.userEmail}</p>
+                <p><strong>User:</strong> {selectedPayment.user_email}</p>
+                <p><strong>Payment Method:</strong> {selectedPayment.payment_method}</p>
+                <p><strong>UTR Number:</strong> {selectedPayment.utr_number || 'N/A'}</p>
               </div>
             )}
             <div>
@@ -447,10 +437,12 @@ const PaymentAdmin = () => {
             {selectedPayment && (
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h4 className="font-medium mb-2">Payment Details:</h4>
-                <p><strong>Transaction ID:</strong> {selectedPayment.transactionId}</p>
-                <p><strong>Plan:</strong> {selectedPayment.planName}</p>
+                <p><strong>Payment ID:</strong> {selectedPayment.payment_id}</p>
+                <p><strong>Plan:</strong> {selectedPayment.plan_name}</p>
                 <p><strong>Amount:</strong> ₹{selectedPayment.amount}</p>
-                <p><strong>User:</strong> {selectedPayment.userEmail}</p>
+                <p><strong>User:</strong> {selectedPayment.user_email}</p>
+                <p><strong>Payment Method:</strong> {selectedPayment.payment_method}</p>
+                <p><strong>UTR Number:</strong> {selectedPayment.utr_number || 'N/A'}</p>
               </div>
             )}
             <div>
@@ -504,8 +496,8 @@ const PaymentAdmin = () => {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="font-medium">Transaction ID</Label>
-                  <p className="text-sm text-muted-foreground font-mono">{selectedPayment.transactionId}</p>
+                  <Label className="font-medium">Payment ID</Label>
+                  <p className="text-sm text-muted-foreground font-mono">{selectedPayment.payment_id}</p>
                 </div>
                 <div>
                   <Label className="font-medium">Status</Label>
@@ -513,47 +505,55 @@ const PaymentAdmin = () => {
                 </div>
                 <div>
                   <Label className="font-medium">Plan Name</Label>
-                  <p className="text-sm text-muted-foreground">{selectedPayment.planName}</p>
+                  <p className="text-sm text-muted-foreground">{selectedPayment.plan_name}</p>
                 </div>
                 <div>
                   <Label className="font-medium">Amount</Label>
                   <p className="text-sm text-muted-foreground">₹{selectedPayment.amount}</p>
                 </div>
                 <div>
-                  <Label className="font-medium">User Name</Label>
-                  <p className="text-sm text-muted-foreground">{selectedPayment.userName || 'N/A'}</p>
+                  <Label className="font-medium">User ID</Label>
+                  <p className="text-sm text-muted-foreground">{selectedPayment.user_id}</p>
                 </div>
                 <div>
                   <Label className="font-medium">User Email</Label>
-                  <p className="text-sm text-muted-foreground">{selectedPayment.userEmail || 'N/A'}</p>
+                  <p className="text-sm text-muted-foreground">{selectedPayment.user_email}</p>
+                </div>
+                <div>
+                  <Label className="font-medium">Payment Method</Label>
+                  <p className="text-sm text-muted-foreground">{selectedPayment.payment_method}</p>
+                </div>
+                <div>
+                  <Label className="font-medium">UTR Number</Label>
+                  <p className="text-sm text-muted-foreground">{selectedPayment.utr_number || 'N/A'}</p>
                 </div>
                 <div>
                   <Label className="font-medium">Submitted At</Label>
                   <p className="text-sm text-muted-foreground">
-                    {selectedPayment.createdAt?.toDate?.()?.toLocaleString() || 'N/A'}
+                    {selectedPayment.created_at?.toDate?.()?.toLocaleString() || 'N/A'}
                   </p>
                 </div>
-                {selectedPayment.verifiedAt && (
+                {selectedPayment.verified_at && (
                   <div>
                     <Label className="font-medium">Verified At</Label>
                     <p className="text-sm text-muted-foreground">
-                      {selectedPayment.verifiedAt?.toDate?.()?.toLocaleString() || 'N/A'}
+                      {selectedPayment.verified_at?.toDate?.()?.toLocaleString() || 'N/A'}
                     </p>
                   </div>
                 )}
               </div>
               
-              {selectedPayment.paymentScreenshot && (
+              {selectedPayment.payment_screenshot_url && (
                 <div>
                   <Label className="font-medium">Payment Screenshot</Label>
-                  <p className="text-sm text-muted-foreground mt-1">{selectedPayment.paymentScreenshot}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{selectedPayment.payment_screenshot_url}</p>
                 </div>
               )}
 
-              {selectedPayment.notes && (
+              {selectedPayment.remarks && (
                 <div>
-                  <Label className="font-medium">Admin Notes</Label>
-                  <p className="text-sm text-muted-foreground mt-1">{selectedPayment.notes}</p>
+                  <Label className="font-medium">Remarks</Label>
+                  <p className="text-sm text-muted-foreground mt-1">{selectedPayment.remarks}</p>
                 </div>
               )}
 

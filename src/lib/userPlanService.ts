@@ -3,20 +3,27 @@ import { db } from './firebase';
 
 export interface PaymentData {
   id: string;
-  transactionId: string;
-  planName: string;
-  amount: string;
-  userEmail: string;
-  userName: string;
-  status: string;
-  createdAt: any;
+  amount: number;
+  created_at: any;
+  payment_id: string;
+  payment_method: string;
+  payment_screenshot_url?: string;
+  plan_name: string;
+  remarks?: string;
+  status: 'pending' | 'success' | 'rejected';
+  updated_at: any;
+  user_email: string;
+  user_id: string;
+  utr_number?: string;
+  verified_by?: string;
+  verified_at?: any;
 }
 
 export interface UserPlan {
   id: string;
   userId: string;
   userEmail: string;
-  userName: string;
+  userName?: string;
   planName: string;
   amount: string;
   paymentId: string;
@@ -25,31 +32,29 @@ export interface UserPlan {
   expiryDate: any;
   createdAt: any;
   updatedAt: any;
+  // Payment information
+  paymentMethod?: string;
+  utrNumber?: string;
+  paymentScreenshotUrl?: string;
+  remarks?: string;
+  verifiedBy?: string;
+  verifiedAt?: any;
 }
 
-// Check if payment already exists in user plans (by transactionId + amount)
-export const checkPaymentExistsInUserPlans = async (transactionId: string, amount: string): Promise<boolean> => {
+// Check if payment already exists in user plans (by payment_id + amount)
+export const checkPaymentExistsInUserPlans = async (paymentId: string, amount: number): Promise<boolean> => {
   try {
-    console.log('Checking if payment exists in user plans:', transactionId, amount);
     const q = query(
       collection(db, 'userPlans'),
-      where('paymentId', '==', transactionId),
-      where('amount', '==', amount)
+      where('paymentId', '==', paymentId),
+      where('amount', '==', amount.toString())
     );
     
     const querySnapshot = await getDocs(q);
     const exists = !querySnapshot.empty;
-    console.log(`Payment ${transactionId} (${amount}) exists in user plans:`, exists);
-    
-    if (exists) {
-      querySnapshot.forEach((doc) => {
-        console.log('Found user plan:', doc.id, doc.data());
-      });
-    }
     
     return exists;
   } catch (error) {
-    console.error('Error checking if payment exists:', error);
     return false;
   }
 };
@@ -69,10 +74,8 @@ export const getAllUserPlans = async () => {
       userPlans.push({ id: doc.id, ...doc.data() });
     });
     
-    console.log('All user plans:', userPlans);
     return userPlans;
   } catch (error) {
-    console.error('Error getting all user plans:', error);
     return [];
   }
 };
@@ -81,7 +84,7 @@ export const getAllUserPlans = async () => {
 export const addPaymentToUserPlans = async (paymentData: PaymentData) => {
   try {
     // Check if payment already exists
-    const exists = await checkPaymentExistsInUserPlans(paymentData.transactionId, paymentData.amount);
+    const exists = await checkPaymentExistsInUserPlans(paymentData.payment_id, paymentData.amount);
     if (exists) {
       return { success: false, error: 'Payment already exists in user plans' };
     }
@@ -90,13 +93,13 @@ export const addPaymentToUserPlans = async (paymentData: PaymentData) => {
     let expiryDate = new Date();
     
     // Check plan name for explicit period indicators
-    if (paymentData.planName.toLowerCase().includes('monthly')) {
+    if (paymentData.plan_name.toLowerCase().includes('monthly')) {
       expiryDate.setMonth(expiryDate.getMonth() + 1);
-    } else if (paymentData.planName.toLowerCase().includes('yearly') || paymentData.planName.toLowerCase().includes('year')) {
+    } else if (paymentData.plan_name.toLowerCase().includes('yearly') || paymentData.plan_name.toLowerCase().includes('year')) {
       expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-    } else if (paymentData.planName.toLowerCase().includes('premium')) {
+    } else if (paymentData.plan_name.toLowerCase().includes('premium')) {
       // For Premium plans, determine period based on amount
-      const amount = parseInt(paymentData.amount);
+      const amount = paymentData.amount;
       if (amount === 449) {
         // Monthly Premium plan
         expiryDate.setMonth(expiryDate.getMonth() + 1);
@@ -107,8 +110,8 @@ export const addPaymentToUserPlans = async (paymentData: PaymentData) => {
         // Default to 1 year for other Premium amounts
         expiryDate.setFullYear(expiryDate.getFullYear() + 1);
       }
-    } else if (paymentData.planName.toLowerCase().includes('ai fundamentals')) {
-      // AI Fundamentals course - 1 year access
+    } else if (paymentData.plan_name.toLowerCase().includes('ai fundamentals') || paymentData.plan_name.toLowerCase().includes('genai')) {
+      // AI Fundamentals course or GenAI course - 1 year access
       expiryDate.setFullYear(expiryDate.getFullYear() + 1);
     } else {
       // Default to 1 year for other plans
@@ -117,32 +120,41 @@ export const addPaymentToUserPlans = async (paymentData: PaymentData) => {
     
     // Create user plan
     const userPlanData = {
-      userId: paymentData.userEmail,
-      planName: paymentData.planName,
-      status: 'verified', // Always set to verified when adding to user plans
+      userId: paymentData.user_id,
+      userEmail: paymentData.user_email,
+      planName: paymentData.plan_name,
+      status: 'active', // Always set to active when adding to user plans
       startDate: now, // Set start date to now when adding to user plans
       expiryDate: expiryDate,
-      paymentId: paymentData.transactionId,
-      amount: paymentData.amount,
+      paymentId: paymentData.payment_id,
+      amount: paymentData.amount.toString(),
+      // Payment information
+      paymentMethod: paymentData.payment_method,
+      utrNumber: paymentData.utr_number,
+      paymentScreenshotUrl: paymentData.payment_screenshot_url,
+      remarks: paymentData.remarks,
+      verifiedBy: paymentData.verified_by,
+      verifiedAt: paymentData.verified_at,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
     
-    console.log('Creating user plan with data:', userPlanData);
     const docRef = await addDoc(collection(db, 'userPlans'), userPlanData);
-    console.log('User plan created with ID:', docRef.id);
     return { success: true, id: docRef.id };
     
   } catch (error) {
-    console.error('Error creating user plan:', error);
     return { success: false, error: error };
   }
 };
 
-// Get all user plans
+// Get all user plans (success payments only)
 export const getUserPlans = async (): Promise<UserPlan[]> => {
   try {
-    const q = query(collection(db, 'userPlans'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, 'userPlans'), 
+      where('status', '==', 'active'),
+      orderBy('createdAt', 'desc')
+    );
     const querySnapshot = await getDocs(q);
     const userPlans: UserPlan[] = [];
     
@@ -155,7 +167,6 @@ export const getUserPlans = async (): Promise<UserPlan[]> => {
     
     return userPlans;
   } catch (error) {
-    console.error('Error getting user plans:', error);
     return [];
   }
 };
@@ -164,10 +175,8 @@ export const getUserPlans = async (): Promise<UserPlan[]> => {
 export const verifyPayment = async (planId: string, planName: string, amount: string) => {
   try {
     // This function can be implemented based on your verification logic
-    console.log('Verifying payment for plan:', planId, planName, amount);
     return { success: true };
   } catch (error) {
-    console.error('Error verifying payment:', error);
     return { success: false, error };
   }
 };
@@ -183,7 +192,6 @@ export const updatePlan = async (planId: string, updates: Partial<UserPlan>) => 
     });
     return { success: true };
   } catch (error) {
-    console.error('Error updating plan:', error);
     return { success: false, error };
   }
 };
@@ -196,4 +204,29 @@ export const isPlanExpired = (expiryDate: any): boolean => {
   const expiry = expiryDate.toDate ? expiryDate.toDate() : new Date(expiryDate);
   
   return now > expiry;
+};
+
+// Update user plan details
+export const updateUserPlanDetails = async (planId: string, updates: {
+  planName?: string;
+  amount?: string;
+  paymentMethod?: string;
+  utrNumber?: string;
+  remarks?: string;
+  expiryDate?: Date;
+}) => {
+  try {
+    const { doc, updateDoc } = await import('firebase/firestore');
+    const planRef = doc(db, 'userPlans', planId);
+    
+    const updateData: any = {
+      ...updates,
+      updatedAt: serverTimestamp()
+    };
+    
+    await updateDoc(planRef, updateData);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error };
+  }
 };
