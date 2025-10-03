@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 
 interface UserRoleContextType {
   userRole: 'admin' | 'user' | 'loading';
@@ -40,25 +38,9 @@ export const UserRoleProvider: React.FC<UserRoleProviderProps> = ({ children }) 
         return;
       }
 
-      try {
-        // Check if user is in the admin users collection by email
-        const q = query(
-          collection(db, 'adminUsers'),
-          where('email', '==', currentUser.email)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          setUserRole('admin');
-        } else {
-          setUserRole('user');
-        }
-      } catch (error) {
-        setUserRole('user');
-      } finally {
-        setIsLoading(false);
-      }
+      // Any authenticated user is considered an admin
+      setUserRole('admin');
+      setIsLoading(false);
     };
 
     checkUserRole();

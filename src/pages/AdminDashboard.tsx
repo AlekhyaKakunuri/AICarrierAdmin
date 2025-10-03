@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Shield, LogOut, User } from "lucide-react";
 import PaymentAdmin from "@/components/PaymentAdmin";
 import AdminStats from "@/components/AdminStats";
-import UserPlansManagement from "@/components/UserPlansManagement";
+import CustomClaimsManagement from "@/components/CustomClaimsManagement";
 import BlogStats from "@/components/BlogStats";
 import BlogManagement from "@/components/BlogManagement";
 import { useAuth } from "@/contexts/AuthContext";
@@ -112,9 +112,9 @@ const AdminDashboard = () => {
           <PaymentAdmin />
         </div>
 
-        {/* User Plans Management */}
+        {/* Custom Claims Management */}
         <div className="mb-8">
-          <UserPlansManagement />
+          <CustomClaimsManagement />
         </div>
 
         {/* Blog Management */}

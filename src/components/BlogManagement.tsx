@@ -31,7 +31,7 @@ const BlogManagement = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Auto-analyze RSS feed on page load (same as button click)
+    // Auto-analyze RSS feed on page load to get processed data
     const autoAnalyzeRSS = async () => {
       try {
         const { syncRSSFeed } = await import('./rss-sync');
@@ -48,7 +48,8 @@ const BlogManagement = () => {
           });
         }
       } catch (error) {
-        // Silent fail for auto-analysis, just fetch blogs normally
+        console.error('RSS sync failed:', error);
+        // Silent fail for auto-analysis
       }
       
       // Always fetch blogs after RSS analysis attempt
@@ -74,15 +75,14 @@ const BlogManagement = () => {
     }
   };
 
-  const filterBlogs = useCallback(() => {
+  const filterBlogs = useCallback(async () => {
     let filtered = blogs;
     
-    // RSS Processed Slugs filter (priority filter)
+    // RSS Processed Slugs filter (priority filter) - only when RSS sync has been done
     if (rssProcessedSlugs) {
       const allProcessedSlugs = [
         ...rssProcessedSlugs.new_slugs,
         ...rssProcessedSlugs.updated_slugs,
-        ...rssProcessedSlugs.skipped_slugs
       ];
       
       filtered = filtered.filter(blog => 
@@ -105,6 +105,45 @@ const BlogManagement = () => {
 
         return matches;
       });
+
+      // If no results found in RSS-processed blogs, search database directly
+      if (filtered.length === 0) {
+        try {
+          console.log('🔍 No results in RSS-processed blogs, searching database directly...');
+          const allBlogs = await BlogService.getAllBlogs();
+          
+          const dbFiltered = allBlogs.filter(blog => {
+            const titleMatch = blog.title && blog.title.toLowerCase().includes(searchLower);
+            const slugMatch = blog.slug && blog.slug.toLowerCase().includes(searchLower);
+            const tagsMatch = blog.tags && Array.isArray(blog.tags) && 
+              blog.tags.some(tag => tag.toLowerCase().includes(searchLower));
+            
+            return titleMatch || slugMatch || tagsMatch;
+          });
+
+          // Apply type filter to database results
+          let typeFiltered = dbFiltered;
+          switch (filterType) {
+            case 'premium':
+              typeFiltered = dbFiltered.filter(blog => blog.access_type === 'premium');
+              break;
+            case 'free':
+              typeFiltered = dbFiltered.filter(blog => blog.access_type === 'free');
+              break;
+          }
+
+          console.log('🔍 Database search found:', typeFiltered.length, 'results');
+          setFilteredBlogs(typeFiltered);
+          return;
+        } catch (error) {
+          console.error('Error searching database:', error);
+          toast({
+            title: "Search Error",
+            description: "Failed to search database",
+            variant: "destructive"
+          });
+        }
+      }
     }
 
     // Type filter
@@ -118,7 +157,7 @@ const BlogManagement = () => {
     }
 
     setFilteredBlogs(filtered);
-  }, [blogs, searchTerm, filterType, rssProcessedSlugs]);
+  }, [blogs, searchTerm, filterType, rssProcessedSlugs, toast]);
 
   useEffect(() => {
     filterBlogs();
@@ -249,18 +288,6 @@ const BlogManagement = () => {
             </div>
           ) : (
             filteredBlogs.map((blog) => {
-              // Determine RSS status for this blog
-              let rssStatus = null;
-              if (rssProcessedSlugs && blog.slug) {
-                if (rssProcessedSlugs.new_slugs.includes(blog.slug)) {
-                  rssStatus = { type: 'new', label: 'New', color: 'bg-green-100 text-green-800' };
-                } else if (rssProcessedSlugs.updated_slugs.includes(blog.slug)) {
-                  rssStatus = { type: 'updated', label: 'Updated', color: 'bg-blue-100 text-blue-800' };
-                } else if (rssProcessedSlugs.skipped_slugs.includes(blog.slug)) {
-                  rssStatus = { type: 'skipped', label: 'No Changes', color: 'bg-yellow-100 text-yellow-800' };
-                }
-              }
-
               return (
                 <div key={blog.id} className="border rounded-lg p-4 hover:bg-gray-50">
                   <div className="flex justify-between items-start">
@@ -270,11 +297,6 @@ const BlogManagement = () => {
                         <Badge variant={blog.access_type === 'premium' ? "default" : "outline"}>
                           {blog.access_type}
                         </Badge>
-                        {rssStatus && (
-                          <Badge className={rssStatus.color}>
-                            {rssStatus.label}
-                          </Badge>
-                        )}
                       </div>
                     <p className="text-sm text-gray-600 mb-2">{blog.excerpt}</p>
                     <div className="flex items-center gap-4 text-xs text-gray-500">

@@ -10,7 +10,7 @@ export interface PaymentData {
   payment_screenshot_url?: string;
   plan_name: string;
   remarks?: string;
-  status: 'pending' | 'success' | 'rejected';
+  status: 'pending' | 'verified' | 'rejected';
   updated_at: any;
   user_email: string;
   user_id: string;
@@ -45,7 +45,7 @@ export const savePaymentDetails = async (paymentData: Omit<PaymentData, 'id' | '
   }
 };
 
-export const updatePaymentStatus = async (paymentId: string, status: 'success' | 'rejected', verifiedBy?: string, remarks?: string) => {
+export const updatePaymentStatus = async (paymentId: string, status: 'verified' | 'rejected', verifiedBy?: string, remarks?: string) => {
   try {
     const paymentRef = doc(db, 'payments', paymentId);
     
@@ -65,8 +65,8 @@ export const updatePaymentStatus = async (paymentId: string, status: 'success' |
     
     await updateDoc(paymentRef, updateData);
     
-    // If payment is successful, also create a user plan
-    if (status === 'success') {
+    // If payment is verified, also create a user plan
+    if (status === 'verified') {
       await createUserPlanFromPayment(paymentId);
     }
     

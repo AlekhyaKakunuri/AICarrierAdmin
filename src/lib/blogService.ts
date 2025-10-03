@@ -106,21 +106,6 @@ export class BlogService {
     }
   }
 
-  // Create new blog post
-  static async createBlog(blogData: Omit<BlogPost, 'id'>): Promise<string> {
-    try {
-      const blogsRef = collection(db, this.collectionName);
-      const docRef = await addDoc(blogsRef, {
-        ...blogData,
-        created_at: new Date().toISOString(),
-        isActive: blogData.isActive ?? true
-      });
-      return docRef.id;
-    } catch (error) {
-      throw error;
-    }
-  }
-
   // Update blog post
   static async updateBlog(id: string, blogData: Partial<BlogPost>): Promise<void> {
     try {
@@ -179,22 +164,6 @@ export class BlogService {
     try {
       const blogsRef = collection(db, this.collectionName);
       const q = query(blogsRef, where('access_type', '==', accessType), orderBy('createdAt', 'desc'));
-      const querySnapshot = await getDocs(q);
-      
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as BlogPost));
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  // Get blogs by author
-  static async getBlogsByAuthor(author: string): Promise<BlogPost[]> {
-    try {
-      const blogsRef = collection(db, this.collectionName);
-      const q = query(blogsRef, where('author', '==', author), orderBy('createdAt', 'desc'));
       const querySnapshot = await getDocs(q);
       
       return querySnapshot.docs.map(doc => ({

@@ -121,7 +121,6 @@ const BlogUpdateModal = ({ isOpen, onClose, blog, onUpdate, isCreateMode = false
 
   const handleUpdate = async () => {
     if (isCreateMode) {
-      await handleCreate();
       return;
     }
 
@@ -194,58 +193,6 @@ const BlogUpdateModal = ({ isOpen, onClose, blog, onUpdate, isCreateMode = false
       toast({
         title: "Error",
         description: "Failed to update blog",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreate = async () => {
-    try {
-      setLoading(true);
-      
-      // Handle file uploads first
-      let thumbnailUrl = formData.thumbnail_url;
-      let coverUrl = formData.cover_url;
-
-      if (thumbnailFile) {
-        const fileName = StorageService.generateFileName(thumbnailFile.name);
-        thumbnailUrl = await StorageService.uploadImage(thumbnailFile, `thumbnails/${fileName}`, 'thumbnail');
-      }
-
-      if (coverFile) {
-        const fileName = StorageService.generateFileName(coverFile.name);
-        coverUrl = await StorageService.uploadImage(coverFile, `covers/${fileName}`, 'cover');
-      }
-
-      // Generate slug from title
-      const slug = formData.title ? BlogService.generateSlug(formData.title) : '';
-
-      // Prepare create data
-      const createData = {
-        ...formData,
-        thumbnail_url: thumbnailUrl,
-        cover_url: coverUrl,
-        slug: slug,
-        created_at: new Date().toISOString(),
-        isActive: formData.status === 'approved'
-      };
-
-      // Create new blog
-      await BlogService.createBlog(createData);
-      
-      toast({
-        title: "Success",
-        description: "Blog created successfully",
-      });
-      
-      onUpdate();
-      onClose();
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to create blog",
         variant: "destructive",
       });
     } finally {

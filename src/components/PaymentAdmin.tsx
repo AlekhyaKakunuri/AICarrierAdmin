@@ -7,10 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { CheckCircle, XCircle, Clock, RefreshCw, Eye, Loader2, Plus } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, RefreshCw, Eye, Loader2, Mail } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { addPaymentToUserPlans, checkPaymentExistsInUserPlans, getAllUserPlans } from '@/lib/userPlanService';
+import { addPaymentToUserPlans, PaymentData as UserPlanPaymentData } from '@/lib/userPlanService';
 import { useAuth } from '@/contexts/AuthContext';
+import { setCustomClaims, createCustomClaimsFromPayment } from '@/lib/customClaimsService';
+import { useRefresh } from '@/contexts/RefreshContext';
+import { sendInvoice } from '@/lib/invoiceService';
+import { processPayment } from '@/lib/paymentProcessingService';
 
 interface PaymentData {
   id: string;
@@ -21,7 +25,7 @@ interface PaymentData {
   payment_screenshot_url?: string;
   plan_name: string;
   remarks?: string;
-  status: 'pending' | 'success' | 'rejected';
+  status: 'pending' | 'verified' | 'rejected';
   updated_at: any;
   user_email: string;
   user_id: string;
@@ -42,8 +46,11 @@ const PaymentAdmin = () => {
   const [processing, setProcessing] = useState(false);
   const [processingPaymentId, setProcessingPaymentId] = useState<string | null>(null);
   const [paymentExistsInUserPlans, setPaymentExistsInUserPlans] = useState<{[key: string]: boolean}>({});
+  const [sendingInvoice, setSendingInvoice] = useState(false);
+  const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
   const { toast } = useToast();
   const { currentUser } = useAuth();
+  const { refreshCustomClaims } = useRefresh();
 
 
   // Check if payments exist in user plans - FIXED FOR DUPLICATE PAYMENT IDs
@@ -66,7 +73,7 @@ const PaymentAdmin = () => {
       const existsMap: {[key: string]: boolean} = {};
       
       payments.forEach(payment => {
-        if (payment.status === 'success') {
+        if (payment.status === 'verified') {
           const key = `${payment.payment_id}_${payment.amount}`;
           const exists = existingPayments.has(key);
           // Use the unique key for the map
@@ -93,9 +100,9 @@ const PaymentAdmin = () => {
         } as PaymentData);
       });
       
-      // Filter out success payments - only show pending and rejected
+      // Filter out verified payments - only show pending and rejected
       const filteredPayments = paymentsData.filter(payment => 
-        payment.status?.toLowerCase() !== 'success'
+        payment.status?.toLowerCase() !== 'verified'
       );
       
       setPayments(filteredPayments);
@@ -136,29 +143,35 @@ const PaymentAdmin = () => {
     try {
       setProcessing(true);
       
-      // Update payment status in Firebase
-      const paymentRef = doc(db, 'payments', selectedPayment.id);
-      await updateDoc(paymentRef, {
-        status: 'success',
-        verified_at: serverTimestamp(),
-        verified_by: currentUser?.email || 'admin',
-        remarks: verificationNotes.trim() || `Payment verified by ${currentUser?.email || 'admin'}`,
-        updated_at: serverTimestamp()
+      
+      const processResult = await processPayment({
+        payment_id: selectedPayment.payment_id,
+        user_id: selectedPayment.user_id,
+        plan_name: selectedPayment.plan_name
       });
 
-      toast({
-        title: "Payment Verified!",
-        description: "Payment has been verified and user's plan will be activated.",
-      });
-
-      setShowVerifyDialog(false);
-      setVerificationNotes('');
-      setSelectedPayment(null);
+      if (processResult.status === 'success') {        
+        toast({
+          title: "Payment Processed Successfully!",
+          description: `Payment has been processed. Custom claims set for ${selectedPayment.user_email}`,
+        });
+        
+        // Trigger refresh of custom claims management with the processed user
+        refreshCustomClaims(selectedPayment.user_id);
+        
+        // Close dialog and refresh payments
+        setShowVerifyDialog(false);
+        setVerificationNotes('');
+        setSelectedPayment(null);
+      } else {
+        throw new Error(processResult.message || 'Payment processing failed');
+      }
     } catch (error) {
+      console.error('❌ Error processing payment:', error);
       toast({
-        title: "Error",
-        description: "Failed to verify payment. Please try again.",
-        variant: "destructive"
+        title: "Payment Processing Failed",
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        variant: "destructive",
       });
     } finally {
       setProcessing(false);
@@ -179,14 +192,14 @@ const PaymentAdmin = () => {
         payment_screenshot_url: payment.payment_screenshot_url,
         plan_name: payment.plan_name,
         remarks: payment.remarks,
-        status: payment.status,
+        status: payment.status as 'pending' | 'verified' | 'rejected',
         updated_at: payment.updated_at,
         user_email: payment.user_email,
         user_id: payment.user_id,
         utr_number: payment.utr_number,
         verified_by: payment.verified_by,
         verified_at: payment.verified_at
-      });
+      } as UserPlanPaymentData);
 
       if (result.success) {
         toast({
@@ -263,6 +276,47 @@ const PaymentAdmin = () => {
   const handleViewDetails = (payment: PaymentData) => {
     setSelectedPayment(payment);
     setShowDetailsDialog(true);
+  };
+
+  const handleSendInvoice = async (payment: PaymentData) => {
+    try {
+      setSendingInvoice(true);
+      setSendingInvoiceId(payment.id);
+
+      const invoiceData = {
+        name: payment.user_email.split('@')[0] || 'User', // Extract name from email
+        email: payment.user_email,
+        amount: payment.amount,
+        plan_name: payment.plan_name,
+        utr: payment.utr_number || payment.payment_id,
+        payment_id: payment.payment_id,
+        notes: `Payment for ${payment.plan_name} plan`,
+        terms: 'Payment terms and conditions apply',
+        payment_method: payment.payment_method || 'upi',
+        verified_by: payment.verified_by || currentUser?.displayName
+      };
+
+      const result = await sendInvoice(invoiceData);
+
+      if (result.success) {
+        toast({
+          title: "Invoice Sent Successfully",
+          description: `Invoice has been sent to ${payment.user_email}`,
+        });
+      } else {
+        throw new Error(result.error || 'Failed to send invoice');
+      }
+    } catch (error) {
+      console.error('Error sending invoice:', error);
+      toast({
+        title: "Failed to Send Invoice",
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        variant: "destructive",
+      });
+    } finally {
+      setSendingInvoice(false);
+      setSendingInvoiceId(null);
+    }
   };
 
 
@@ -351,6 +405,19 @@ const PaymentAdmin = () => {
                   >
                     <XCircle className="h-3 w-3 mr-1" />
                     Reject
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => handleSendInvoice(payment)}
+                    disabled={sendingInvoice && sendingInvoiceId === payment.id}
+                  >
+                    {sendingInvoice && sendingInvoiceId === payment.id ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <Mail className="h-3 w-3 mr-1" />
+                    )}
+                    Send Invoice
                   </Button>
                   <Button 
                     size="sm" 

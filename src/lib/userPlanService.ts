@@ -10,7 +10,7 @@ export interface PaymentData {
   payment_screenshot_url?: string;
   plan_name: string;
   remarks?: string;
-  status: 'pending' | 'success' | 'rejected';
+  status: 'pending' | 'verified' | 'rejected';
   updated_at: any;
   user_email: string;
   user_id: string;
